@@ -210,10 +210,12 @@ fn write_metadata(
 ) -> anyhow::Result<()> {
     let mut stmt = tx.prepare_cached("INSERT INTO metadata (key, value) VALUES (?, ?)")?;
     
-    // TODO: This is inefficient, find a better way to get alphabet back
-    let alphabet_str = String::from_utf8(hpin.alphabet().to_vec())?;
+    // Only write the alphabet if it's valid UTF-8.
+    // For the idmap, the alphabet is all 256 bytes, which is not valid UTF-8.
+    if let Ok(alphabet_str) = String::from_utf8(hpin.alphabet().to_vec()) {
+        stmt.execute(("alphabet", alphabet_str))?;
+    }
     
-    stmt.execute(("alphabet", alphabet_str))?;
     stmt.execute(("n", hpin.n().to_string()))?;
     stmt.execute(("m", hpin.m().to_string()))?;
 

@@ -32,10 +32,12 @@ impl HibcIndex {
         // Open master index and load metadata
         let index_conn = Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
         
-        let alphabet_str: String = index_conn.query_row("SELECT value FROM metadata WHERE key = 'alphabet'", [], |r| r.get(0))?;
+        let alphabet_str: Option<String> = index_conn.query_row("SELECT value FROM metadata WHERE key = 'alphabet'", [], |r| r.get(0)).optional()?;
         let n: usize = index_conn.query_row("SELECT value FROM metadata WHERE key = 'n'", [], |r| r.get::<_, String>(0))?.parse()?;
         let m: usize = index_conn.query_row("SELECT value FROM metadata WHERE key = 'm'", [], |r| r.get::<_, String>(0))?.parse()?;
         
+        let alphabet: Vec<u8> = alphabet_str.map(|s| s.into_bytes()).unwrap_or_else(|| (0..=255).collect());
+
         let split_prefixes_str: String = index_conn.query_row("SELECT value FROM metadata WHERE key = 'split_prefixes'", [], |r| r.get(0))?;
         let split_prefixes = if split_prefixes_str.is_empty() {
             HashSet::new()
@@ -43,7 +45,7 @@ impl HibcIndex {
             split_prefixes_str.split(',').map(|s| s.parse()).collect::<Result<HashSet<u64>, _>>()?
         };
 
-        let hpin = Hpin::new(alphabet_str.as_bytes(), n, m).map_err(|e| anyhow::anyhow!(e))?;
+        let hpin = Hpin::new(&alphabet, n, m).map_err(|e| anyhow::anyhow!(e))?;
 
         // Memory-map the data file
         let data_file = std::fs::File::open(&data_path)

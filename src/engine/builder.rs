@@ -44,10 +44,14 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
         // --- HIBC Builders ---
         // For docmap: keys are user-provided strings
         let docmap_base_path = base_path.join("docmap");
+        let docmap_alphabet = (b'a'..=b'z')
+            .chain(b'0'..=b'9')
+            .chain(std::iter::once(b'_'))
+            .chain(std::iter::once(b' ')) // Add space for padding
+            .collect::<Vec<u8>>();
         let docmap_hpin = Hpin::new(
-            // Using a full ASCII range for arbitrary string IDs
-            (32..=126).collect::<Vec<u8>>().as_slice(),
-            36, // Fixed key length for doc ids
+            &docmap_alphabet,
+            36, // Use the same fixed key length as in build_from_jsonl
             4,
         ).unwrap();
         let docmap_builder = HibcIndexBuilder::new(&docmap_base_path, docmap_hpin)?;
@@ -91,7 +95,7 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
 
             // 3. Add entry to docmap: doc_id -> metadata_ptr
             let mut doc_id_key = record.id.as_bytes().to_vec();
-            doc_id_key.resize(36, 0); // Pad key to fixed length
+            doc_id_key.resize(36, b' '); // Pad key to fixed length with spaces
             self.docmap_builder.add(&doc_id_key, metadata_ptr)?;
 
             // 4. Write doc_id to the blob store (for the reverse index) and get a pointer
@@ -120,3 +124,4 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
         Ok(())
     }
 }
+
