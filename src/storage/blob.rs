@@ -8,7 +8,6 @@ use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use bytemuck::{Pod, Zeroable};
-use std::borrow::Cow;
 
 /// A pointer to a variable-length blob of data within a BlobStore.
 ///

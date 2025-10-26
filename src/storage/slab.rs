@@ -151,3 +151,83 @@ impl SlabReader {
         self.len() == 0
     }
 }
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    // A simple POD struct for testing, 8 bytes in size.
+    #[repr(C)]
+    #[derive(Debug, Clone, Copy, PartialEq, bytemuck::Pod, bytemuck::Zeroable)]
+    struct TestRecord {
+        a: u32,
+        b: u32,
+    }
+
+    #[test]
+    fn test_slab_store_roundtrip() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let slab_path = dir.path().join("test.slab");
+        let record_size = std::mem::size_of::<TestRecord>() as u64;
+
+        let record1 = TestRecord { a: 1, b: 2 };
+        let record2 = TestRecord { a: 10, b: 20 };
+        let record3 = TestRecord { a: u32::MAX, b: 0 };
+
+        let id1: RecordId;
+        let id2: RecordId;
+        let id3: RecordId;
+
+        // --- WRITE PHASE ---
+        {
+            let mut writer = SlabWriter::new(&slab_path, record_size)?;
+            id1 = writer.append(bytemuck::bytes_of(&record1))?;
+            id2 = writer.append(bytemuck::bytes_of(&record2))?;
+            id3 = writer.append(bytemuck::bytes_of(&record3))?;
+            writer.flush()?;
+        }
+
+        // --- READ PHASE ---
+        let reader = SlabReader::open(&slab_path)?;
+        assert_eq!(reader.len(), 3);
+        assert_eq!(id1, 0);
+        assert_eq!(id2, 1);
+        assert_eq!(id3, 2);
+
+        // Read back raw bytes and cast to the struct
+        let read_record1: &TestRecord = bytemuck::try_from_bytes(reader.read(id1)?)?;
+        let read_record2: &TestRecord = bytemuck::try_from_bytes(reader.read(id2)?)?;
+        let read_record3: &TestRecord = bytemuck::try_from_bytes(reader.read(id3)?)?;
+
+        assert_eq!(*read_record1, record1);
+        assert_eq!(*read_record2, record2);
+        assert_eq!(*read_record3, record3);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_slab_writer_invalid_size() {
+        let dir = tempdir().unwrap();
+        let slab_path = dir.path().join("invalid.slab");
+        let mut writer = SlabWriter::new(&slab_path, 8).unwrap();
+
+        // This is 4 bytes, but the slab expects 8.
+        let invalid_data = vec![0u8; 4];
+        let result = writer.append(&invalid_data);
+        assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_slab_reader_invalid_file() {
+        let dir = tempdir().unwrap();
+        let invalid_path = dir.path().join("not_a_slab.file");
+        
+        // Write garbage that doesn't match the SLABv1 header
+        std::fs::write(&invalid_path, b"this is not a slab file").unwrap();
+
+        let result = SlabReader::open(&invalid_path);
+        assert!(result.is_err());
+    }
+}
