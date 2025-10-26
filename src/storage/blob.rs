@@ -8,6 +8,7 @@ use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
 use bytemuck::{Pod, Zeroable};
+use std::borrow::Cow;
 
 /// A pointer to a variable-length blob of data within a BlobStore.
 ///
@@ -100,8 +101,74 @@ impl BlobReader {
         let start = pointer.offset as usize;
         let end = start + pointer.size as usize;
 
+        // The .get() method on mmap already returns a Result<&[u8], _>, which is exactly what we want.
         self.mmap
             .get(start..end)
             .with_context(|| "BlobPointer out of bounds")
+    }
+}
+
+// APPEND THIS CODE TO THE END OF THE FILE
+
+#[cfg(test)]
+mod tests {
+    use super::*;
+    use tempfile::tempdir;
+
+    #[test]
+    fn test_blob_store_roundtrip() -> anyhow::Result<()> {
+        let dir = tempdir()?;
+        let blob_path = dir.path().join("test.blob");
+
+        let data1 = b"hello world";
+        let data2 = b"this is a slightly longer blob of data";
+        let data3 = vec![0u8; 1024]; // A larger blob
+
+        let ptr1: BlobPointer;
+        let ptr2: BlobPointer;
+        let ptr3: BlobPointer;
+
+        // --- WRITE PHASE ---
+        {
+            let mut writer = BlobWriter::new(&blob_path)?;
+            ptr1 = writer.append(data1)?;
+            ptr2 = writer.append(data2)?;
+            ptr3 = writer.append(&data3)?;
+            writer.flush()?;
+        } // Writer is dropped here, closing the file handle
+
+        // --- READ PHASE ---
+        let reader = BlobReader::open(&blob_path)?;
+
+        // Read back and assert correctness
+        assert_eq!(data1, reader.read(ptr1)?);
+        assert_eq!(data2, reader.read(ptr2)?);
+        assert_eq!(data3.as_slice(), reader.read(ptr3)?);
+
+        Ok(())
+    }
+
+    #[test]
+    fn test_blob_reader_out_of_bounds() {
+        let dir = tempdir().unwrap();
+        let blob_path = dir.path().join("test_oob.blob");
+
+        // Write a small amount of data
+        {
+            let mut writer = BlobWriter::new(&blob_path).unwrap();
+            writer.append(b"some data").unwrap();
+            writer.flush().unwrap();
+        }
+
+        let reader = BlobReader::open(&blob_path).unwrap();
+        // This pointer tries to read data far beyond the end of the file
+        let invalid_pointer = BlobPointer {
+            offset: 100,
+            size: 100,
+        };
+        let result = reader.read(invalid_pointer);
+
+        // We expect this to fail
+        assert!(result.is_err());
     }
 }
