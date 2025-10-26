@@ -2,7 +2,7 @@
 
 use super::{bic, hpin::Hpin};
 use crate::storage::blob::BlobPointer;
-use anyhow::{anyhow, Context};
+use anyhow::Context;
 use rayon::prelude::*;
 use rusqlite::{Connection, Transaction};
 use std::collections::{HashMap, HashSet};
@@ -11,6 +11,7 @@ use std::io::{BufWriter, Seek, Write};
 use std::path::{Path, PathBuf};
 use std::sync::mpsc::{channel, Receiver, Sender};
 use std::thread::{self, JoinHandle};
+use std::io::SeekFrom;
 
 // Internal structs for managing the build process
 #[derive(Debug, Clone, Copy)]
@@ -48,7 +49,7 @@ impl HibcIndexBuilder {
         let db_path = base_path.with_extension("db");
         let data_path = base_path.with_extension("hibc");
         if db_path.exists() { std::fs::remove_file(db_path)?; }
-        if data_path.exists() { std::fs::remove_file(data_path)?; }
+        if data_path.exists() { std::fs::remove_file(&data_path)?; }
 
         let (tx, rx) = channel();
         let data_path_clone = data_path.to_path_buf();
@@ -210,9 +211,7 @@ fn write_metadata(
     let mut stmt = tx.prepare_cached("INSERT INTO metadata (key, value) VALUES (?, ?)")?;
     
     // TODO: This is inefficient, find a better way to get alphabet back
-    let alphabet_str: String = (0..=255)
-        .filter_map(|i| if hpin.parse(&[i; hpin.n()]).is_ok() { Some(i as char) } else { None })
-        .collect();
+    let alphabet_str = String::from_utf8(hpin.alphabet().to_vec())?;
     
     stmt.execute(("alphabet", alphabet_str))?;
     stmt.execute(("n", hpin.n().to_string()))?;

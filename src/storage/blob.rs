@@ -7,11 +7,13 @@ use std::fs::{File, OpenOptions};
 use std::io::{BufWriter, Seek, Write};
 use std::path::Path;
 use std::sync::{Arc, Mutex};
+use bytemuck::{Pod, Zeroable};
 
 /// A pointer to a variable-length blob of data within a BlobStore.
 ///
 /// This is a plain-old-data struct that is cheap to copy and pass around.
-#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq)]
+#[repr(C)]
+#[derive(Debug, Clone, Copy, Serialize, Deserialize, PartialEq, Eq, Pod, Zeroable)]
 pub struct BlobPointer {
     pub offset: u64,
     pub size: u64,

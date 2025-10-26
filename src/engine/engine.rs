@@ -1,10 +1,9 @@
 // In src/engine/engine.rs
 
-use crate::index::ann::{AnnIndex, AnnResult};
-use crate::index::hibc::HibcIndex;
+use crate::index::ann::index::{AnnIndex, AnnResult};
+use crate::index::hibc::index::HibcIndex;
 use crate::index::traits::{AnnIndex as AnnIndexTrait, Index as IndexTrait};
 use crate::storage::blob::BlobReader;
-use crate::storage::slab::RecordId;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 

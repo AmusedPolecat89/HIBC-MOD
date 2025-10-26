@@ -33,6 +33,9 @@ pub struct BuildArgs {
     /// The dimension of the vectors in the dataset.
     #[arg(long, default_value_t = 512)]
     pub vector_dim: usize,
+    /// Expected number of items to be inserted (for pre-allocation).
+    #[arg(long)]
+    pub capacity: usize,
 }
 
 #[derive(Parser, Debug)]
@@ -55,7 +58,8 @@ pub fn handle_build(args: BuildArgs) -> anyhow::Result<()> {
     println!("Starting database build...");
     let start_time = Instant::now();
 
-    let mut builder = EngineBuilder::new(&args.db_path, args.vector_dim)?;
+    // Pass the capacity to the EngineBuilder
+    let mut builder = EngineBuilder::new(&args.db_path, args.vector_dim, args.capacity)?;
     builder.build_from_jsonl(&args.input_file)?;
     builder.finalize()?;
 

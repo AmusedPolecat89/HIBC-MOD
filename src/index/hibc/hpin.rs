@@ -5,6 +5,7 @@ use thiserror::Error;
 /// A struct that encapsulates the logic for Hierarchical Prefix-ID Notation (HPIN).
 #[derive(Debug, Clone)]
 pub struct Hpin {
+    alphabet: Vec<u8>, // Add this field
     alphabet_map: [u8; 256],
     n: usize,
     prefix_len: usize,
@@ -33,7 +34,7 @@ impl Hpin {
         let powers = (0..prefix_len)
             .map(|p| k_u64.pow((prefix_len - 1 - p) as u32))
             .collect();
-        Ok(Self { alphabet_map, n, prefix_len, powers })
+        Ok(Self { alphabet: alphabet.to_vec(), alphabet_map, n, prefix_len, powers })
     }
 
     pub fn parse<'a>(&self, word: &'a [u8]) -> Result<(u64, &'a [u8]), HpinError> {
@@ -59,4 +60,7 @@ impl Hpin {
 
     pub fn n(&self) -> usize { self.n }
     pub fn m(&self) -> usize { self.n - self.prefix_len }
+    pub fn alphabet(&self) -> &[u8] {
+        &self.alphabet
+    }
 }

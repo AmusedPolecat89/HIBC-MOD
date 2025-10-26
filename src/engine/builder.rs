@@ -13,9 +13,9 @@ use std::path::{Path, PathBuf};
 /// The top-level builder for creating a complete `DataEngine` instance.
 ///
 /// It coordinates multiple underlying index builders.
-pub struct EngineBuilder {
+pub struct EngineBuilder<'a> { // Add lifetime here
     base_path: PathBuf,
-    ann_builder: AnnIndexBuilder,
+    ann_builder: AnnIndexBuilder<'a>, // And here
     docmap_builder: HibcIndexBuilder,
     idmap_builder: HibcIndexBuilder,
     metadata_store: BlobWriter,
@@ -29,14 +29,13 @@ struct InputRecord {
     metadata: serde_json::Value,
 }
 
-impl EngineBuilder {
-    pub fn new(base_path: &Path, vector_dim: usize) -> anyhow::Result<Self> {
+impl<'a> EngineBuilder<'a> { // Add lifetime here
+    // The `new` function now needs a capacity hint.
+    pub fn new(base_path: &Path, vector_dim: usize, capacity: usize) -> anyhow::Result<Self> {
         fs::create_dir_all(base_path)?;
         
-        // --- Configure and create each of the underlying builders ---
-
-        // ANN Builder
-        let ann_builder = AnnIndexBuilder::new(vector_dim);
+        // Pass the capacity to the AnnIndexBuilder
+        let ann_builder = AnnIndexBuilder::new(vector_dim, capacity);
 
         // Blob store for all text-based values (doc ids and metadata)
         let metadata_path = base_path.join("metadata.blob");
@@ -84,7 +83,7 @@ impl EngineBuilder {
             let record_id = i as u64;
 
             // 1. Add vector to the in-memory ANN builder
-            self.ann_builder.add(record.vector);
+            self.ann_builder.add(&record.vector);
             
             // 2. Write metadata to the blob store and get a pointer
             let metadata_bytes = serde_json::to_vec(&record.metadata)?;
