@@ -64,9 +64,20 @@ impl HibcIndex {
             .get(offset as usize..(offset + size) as usize)
             .context("Block pointer out of bounds in data file")?;
         
+        // Skip the header (version byte + LEB128 count) to get to the payload
+        let mut header_reader = std::io::Cursor::new(block_data);
+        let _version = {
+            let mut buf = [0u8; 1];
+            std::io::Read::read_exact(&mut header_reader, &mut buf)?;
+            buf[0]
+        };
+        let _count = leb128::read::unsigned(&mut header_reader)?;
+        let header_size = header_reader.position() as usize;
+        let payload = &block_data[header_size..];
+        
         // TODO: Add CRC32 checksum validation here for production-readiness
 
-        Ok(Some(bic::decode_block_kv(block_data)?))
+        Ok(Some(bic::decode_block_kv(payload)?))
     }
 }
 

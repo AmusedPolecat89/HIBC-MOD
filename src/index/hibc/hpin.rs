@@ -18,12 +18,14 @@ pub enum HpinError {
     InvalidLength { expected: usize, actual: usize },
     #[error("Character '{char}' not found in alphabet")]
     InvalidChar { char: char },
+    #[error("Tail length 'm' must be between 1 and n-1, but got {actual}")]
+    InvalidTailLength { actual: usize },
 }
 
 impl Hpin {
-    pub fn new(alphabet: &[u8], n: usize, m: usize) -> Result<Self, &'static str> {
+    pub fn new(alphabet: &[u8], n: usize, m: usize) -> Result<Self, HpinError> {
         if m == 0 || m >= n {
-            return Err("Tail length 'm' must be between 1 and n-1");
+            return Err(HpinError::InvalidTailLength { actual: m });
         }
         let mut alphabet_map = [u8::MAX; 256];
         for (i, &byte_val) in alphabet.iter().enumerate() {
