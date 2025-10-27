@@ -33,12 +33,12 @@ impl<'a> AnnIndexBuilder<'a> {
         let nb_layer = 16usize.min((capacity as f32).ln().trunc() as usize);
         let ef_c = 400; // efConstruction parameter
 
-        println!("[SUPER DEBUG] Creating AnnIndexBuilder.");
-        println!("[SUPER DEBUG]   - Vector Dim: {}", vector_dim);
-        println!("[SUPER DEBUG]   - Capacity: {}", capacity);
-        println!("[SUPER DEBUG]   - Max Connections (M): {}", max_nb_conn);
-        println!("[SUPER DEBUG]   - Num Layers: {}", nb_layer);
-        println!("[SUPER DEBUG]   - efConstruction: {}", ef_c);
+        log::debug!("Creating AnnIndexBuilder.");
+        log::debug!("  - Vector Dim: {}", vector_dim);
+        log::debug!("  - Capacity: {}", capacity);
+        log::debug!("  - Max Connections (M): {}", max_nb_conn);
+        log::debug!("  - Num Layers: {}", nb_layer);
+        log::debug!("  - efConstruction: {}", ef_c);
 
         Self {
             // The constructor takes parameters and an instance of the distance metric.
@@ -50,12 +50,12 @@ impl<'a> AnnIndexBuilder<'a> {
     pub fn add(&mut self, vector: &[f32]) {
         // Get the current number of points in the HNSW structure
         let current_len = self.in_memory_hnsw.get_nb_point();
-        println!("[SUPER DEBUG] add(): About to insert vector at index {}. Vector (first 5 elements): {:?}", current_len, &vector[..5]);
+        log::trace!("add(): About to insert vector at index {}. Vector (first 5 elements): {:?}", current_len, &vector[..5]);
 
         // The API uses `insert_slice` with a tuple of (vector_slice, external_id).
         self.in_memory_hnsw.insert_slice((vector, current_len));
         self.vectors.push(vector.to_vec());
-        println!("[SUPER DEBUG] add(): Insertion complete. New index length: {}", self.in_memory_hnsw.get_nb_point());
+        log::debug!("add(): Insertion complete. New index length: {}", self.in_memory_hnsw.get_nb_point());
     }
 
     pub fn finalize(self, base_path: &Path) -> anyhow::Result<()> {
@@ -64,8 +64,8 @@ impl<'a> AnnIndexBuilder<'a> {
         log::info!("Serializing HNSW graph to on-disk format...");
         let slab_path = base_path.with_extension("ann_slab");
         let blob_path = base_path.with_extension("ann_blob");
-        println!("[SUPER DEBUG]   - Slab Path: {:?}", slab_path);
-        println!("[SUPER DEBUG]   - Blob Path: {:?}", blob_path);
+        log::debug!("  - Slab Path: {:?}", slab_path);
+        log::debug!("  - Blob Path: {:?}", blob_path);
 
 
         let record_size = std::mem::size_of::<AnnSlabRecord>() as u64;
@@ -73,11 +73,11 @@ impl<'a> AnnIndexBuilder<'a> {
         let mut blob_writer = BlobWriter::new(&blob_path)?;
 
         let num_nodes = self.in_memory_hnsw.get_nb_point();
-        println!("[SUPER DEBUG] Total nodes to serialize: {}", num_nodes);
+        log::debug!("Total nodes to serialize: {}", num_nodes);
 
         for node_id in 0..num_nodes {
             if node_id % 1000 == 0 {
-                 println!("[SUPER DEBUG]   - Serializing node {} / {}", node_id, num_nodes);
+                log::trace!("  - Serializing node {} / {}", node_id, num_nodes);
             }
             let vector = &self.vectors[node_id];
             // Search for a small number of neighbors to build a basic graph
@@ -100,7 +100,7 @@ impl<'a> AnnIndexBuilder<'a> {
             assert_eq!(written_record_id, node_id as u64, "Node IDs must be sequential");
         }
 
-        println!("[SUPER DEBUG] Flushing slab and blob writers.");
+        log::debug!("Flushing slab and blob writers.");
         slab_writer.flush()?;
         blob_writer.flush()?;
 
