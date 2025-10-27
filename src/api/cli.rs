@@ -1,6 +1,7 @@
 // In src/api/cli.rs
 
 use crate::engine::{builder::EngineBuilder, engine::DataEngine, config::EngineConfig};
+use chrono::Utc;
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -26,6 +27,9 @@ pub enum Commands {
     Search(SearchArgs),
     /// Serve an HTTP API exposing search and document endpoints.
     Serve(ServeArgs),
+    Upsert(UpsertArgs),  // NEW
+    Delete(DeleteArgs),  // NEW
+    Flush(FlushArgs),    // NEW
 }
 
 #[derive(Parser, Debug)]
@@ -64,7 +68,31 @@ pub struct ServeArgs {
     pub bind: String,
 }
 
+#[derive(Parser, Debug)]
+pub struct UpsertArgs {
+    #[arg(short, long)] pub db_path: PathBuf,
+    #[arg(long)] pub id: String,
+    #[arg(long)] pub vector: String, // JSON array
+    #[arg(long)] pub metadata: String, // JSON obj
+}
+
+#[derive(Parser, Debug)]
+pub struct DeleteArgs {
+    #[arg(short, long)] pub db_path: PathBuf,
+    #[arg(long)] pub id: String,
+}
+
+#[derive(Parser, Debug)]
+pub struct FlushArgs {
+    #[arg(short, long)] pub db_path: PathBuf,
+}
+
 // --- 2. Implement the Handler Functions ---
+
+fn now_ts_u64() -> u64 {
+    // Protect against negative timestamps (unlikely, but keeps types clean)
+    Utc::now().timestamp().max(0) as u64
+}
 
 /// Handles the `build` command.
 pub fn handle_build(args: BuildArgs) -> anyhow::Result<()> {
@@ -103,10 +131,7 @@ pub fn handle_search(args: SearchArgs) -> anyhow::Result<()> {
         search_duration.as_micros() as f64 / 1000.0
     );
     println!("{:-<80}", "");
-    println!(
-        "{:<38} {:<15} {}",
-        "Document ID", "Distance", "Metadata"
-    );
+    println!("{:<38} {:<15} Metadata", "Document ID", "Distance");
     println!("{:-<80}", "");
 
     for result in results {
@@ -128,4 +153,27 @@ pub fn handle_serve(args: ServeArgs) -> anyhow::Result<()> {
         .thread_name("hibc-serve")
         .build()?;
     rt.block_on(crate::api::serve::serve(args.db_path, addr))
+}
+
+pub fn handle_upsert(a: UpsertArgs) -> anyhow::Result<()> {
+    let engine = DataEngine::open(&a.db_path)?;
+    let vector: Vec<f32> = serde_json::from_str(&a.vector)?;
+    let metadata: serde_json::Value = serde_json::from_str(&a.metadata)?;
+    engine.upsert(a.id, vector, metadata, now_ts_u64())?;
+    println!("OK");
+    Ok(())
+}
+
+pub fn handle_delete(a: DeleteArgs) -> anyhow::Result<()> {
+    let engine = DataEngine::open(&a.db_path)?;
+    engine.delete(a.id, now_ts_u64())?;
+    println!("OK");
+    Ok(())
+}
+
+pub fn handle_flush(a: FlushArgs) -> anyhow::Result<()> {
+    let engine = DataEngine::open(&a.db_path)?;
+    engine.flush_now()?;
+    println!("Flushed");
+    Ok(())
 }

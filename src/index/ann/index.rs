@@ -29,7 +29,7 @@ struct MinCandidate {
 impl Eq for MinCandidate {}
 impl PartialOrd for MinCandidate {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        other.distance.partial_cmp(&self.distance)
+        Some(self.cmp(other))
     }
 }
 impl Ord for MinCandidate {
@@ -48,7 +48,7 @@ struct MaxCandidate {
 impl Eq for MaxCandidate {}
 impl PartialOrd for MaxCandidate {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
-        self.distance.partial_cmp(&other.distance)
+        Some(self.cmp(other))
     }
 }
 impl Ord for MaxCandidate {

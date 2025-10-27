@@ -68,14 +68,22 @@ impl<'a> AnnIndexBuilder<'a> {
     }
 
     pub fn finalize(self, base_path: &Path) -> anyhow::Result<()> {
-        log::info!("Building HNSW graph in-memory from {} vectors...", self.vectors.len());
-        log::info!("In-memory HNSW graph build complete.");
-        log::info!("Serializing HNSW graph to on-disk format...");
+        let num_vectors = self.vectors.len();
+        log::info!("Building HNSW graph in-memory from {} vectors...", num_vectors);
+        
+        // Safety guard: HNSW can have issues with very small datasets
+        // Use a simplified approach for tiny datasets (empirically, < 10 is risky)
+        let use_linear_fallback = num_vectors < 10;
+        
+        if use_linear_fallback {
+            log::warn!("Dataset too small (n={}), using linear index instead of HNSW", num_vectors);
+        }
+        
+        log::info!("Serializing ANN index to on-disk format...");
         let slab_path = base_path.with_extension("ann_slab");
         let blob_path = base_path.with_extension("ann_blob");
         log::debug!("  - Slab Path: {:?}", slab_path);
         log::debug!("  - Blob Path: {:?}", blob_path);
-
 
         let record_size = std::mem::size_of::<AnnSlabRecord>() as u64;
         let mut slab_writer = SlabWriter::new(&slab_path, record_size)?;
@@ -89,13 +97,24 @@ impl<'a> AnnIndexBuilder<'a> {
                 log::trace!("  - Serializing node {} / {}", node_id, num_nodes);
             }
             let vector = &self.vectors[node_id];
-            // Search for a small number of neighbors to build a basic graph
-            let neighbors = self.in_memory_hnsw.search(
-                vector,
-                self.cfg.ann_build_neighbor_k,
-                self.cfg.ann.ef_search.max(100),
-            );
-            let neighbor_ids: Vec<u64> = neighbors.iter().map(|n| n.d_id as u64).collect();
+            
+            // For tiny datasets, use all vectors as neighbors (linear fallback)
+            // For normal datasets, use HNSW search
+            let neighbor_ids: Vec<u64> = if use_linear_fallback {
+                // Linear fallback: all other vectors are neighbors
+                (0..num_nodes)
+                    .filter(|&id| id != node_id)
+                    .map(|id| id as u64)
+                    .collect()
+            } else {
+                // Normal HNSW search path
+                let neighbors = self.in_memory_hnsw.search(
+                    vector,
+                    self.cfg.ann_build_neighbor_k,
+                    self.cfg.ann.ef_search.max(100),
+                );
+                neighbors.iter().map(|n| n.d_id as u64).collect()
+            };
 
             let neighbors_bytes = bincode::serialize(&neighbor_ids)?;
             let neighbors_ptr = blob_writer.append(&neighbors_bytes)?;
@@ -111,7 +130,7 @@ impl<'a> AnnIndexBuilder<'a> {
             };
 
             let record_bytes = bytemuck::bytes_of(&record);
-            let written_record_id = slab_writer.append(&record_bytes)?;
+            let written_record_id = slab_writer.append(record_bytes)?;
 
             assert_eq!(written_record_id, node_id as u64, "Node IDs must be sequential");
         }

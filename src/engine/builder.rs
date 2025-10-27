@@ -10,6 +10,18 @@ use serde::Deserialize;
 use std::fs;
 use std::io::{BufRead, BufReader};
 use std::path::{Path, PathBuf};
+use crate::engine::lsm::segment::{OpRecord, StoredPayload};
+
+// Legacy format for JSONL without the "op" tag
+#[derive(Debug, Deserialize)]
+struct LegacyRecord {
+    id: String,
+    vector: Vec<f32>,
+    #[serde(default)]
+    metadata: serde_json::Value,
+}
+
+
 
 /// The top-level builder for creating a complete `DataEngine` instance.
 ///
@@ -23,13 +35,8 @@ pub struct EngineBuilder<'a> { // Add lifetime here
     config: EngineConfig,
 }
 
-/// Represents the structure of a single line in the input JSONL file.
-#[derive(Deserialize)]
-struct InputRecord {
-    id: String,
-    vector: Vec<f32>,
-    metadata: serde_json::Value,
-}
+
+
 
 impl<'a> EngineBuilder<'a> { // Add lifetime here
     pub fn new(base_path: &Path, config: EngineConfig) -> anyhow::Result<Self> {
@@ -71,6 +78,12 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
     }
 
     /// Ingests data from a JSONL file, building all indexes in a single pass.
+    /// 
+    /// Supports two JSONL formats:
+    /// 1. Tagged format: `{"op": "Upsert", "id": "...", "vector": [...], "metadata": {...}, "ts": 123}`
+    /// 2. Legacy format: `{"id": "...", "vector": [...], "metadata": {...}}`
+    /// 
+    /// Auto-detects which format is used based on the presence of the "op" field.
     pub fn build_from_jsonl(&mut self, input_path: &Path) -> anyhow::Result<()> {
         let file = fs::File::open(input_path)
             .with_context(|| format!("Failed to open input file: {}", input_path.display()))?;
@@ -79,27 +92,61 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
         log::info!("Starting single-pass build from {}", input_path.display());
 
         for (i, line) in reader.lines().enumerate() {
-            let record: InputRecord = serde_json::from_str(&line?)?;
+            let line_str = line?;
             let record_id = i as u64;
 
-            // 1. Add vector to the in-memory ANN builder
-            self.ann_builder.add(&record.vector);
+            // Try to parse as a generic JSON value first to detect format
+            let json_val: serde_json::Value = serde_json::from_str(&line_str)?;
             
-            // 2. Write metadata to the blob store and get a pointer
-            let metadata_bytes = serde_json::to_vec(&record.metadata)?;
-            let metadata_ptr = self.metadata_store.append(&metadata_bytes)?;
+            // Check if this is a tagged format (has "op" field) or legacy format
+            let (id, vector, metadata, ts, is_tombstone) = if json_val.get("op").is_some() {
+                // Tagged format: deserialize as OpRecord
+                let record: OpRecord = serde_json::from_value(json_val)?;
+                match record {
+                    OpRecord::Upsert { id, vector, metadata, ts } => {
+                        (id, vector, metadata, ts, false)
+                    }
+                    OpRecord::Delete { id, ts } => {
+                        (id, vec![], serde_json::Value::Null, ts, true)
+                    }
+                }
+            } else {
+                // Legacy format: deserialize as LegacyRecord
+                let record: LegacyRecord = serde_json::from_value(json_val)?;
+                // Use record_id as timestamp for legacy records
+                (record.id, record.vector, record.metadata, record_id, false)
+            };
 
-            // 3. Add entry to docmap: doc_id -> metadata_ptr
-            let mut doc_id_key = record.id.as_bytes().to_vec();
-            doc_id_key.resize(self.config.doc_id_key_len, b' '); // pad to configured length
-            self.docmap_builder.add(&doc_id_key, metadata_ptr)?;
+            if !is_tombstone {
+                // 1. Add vector to the in-memory ANN builder
+                self.ann_builder.add(&vector);
+                
+                // 2. Write metadata to the blob store and get a pointer
+                let payload = StoredPayload { ts, metadata, is_tombstone: false };
+                let metadata_bytes = serde_json::to_vec(&payload)?;
+                let metadata_ptr = self.metadata_store.append(&metadata_bytes)?;
 
-            // 4. Write doc_id to the blob store (for the reverse index) and get a pointer
-            let doc_id_ptr = self.metadata_store.append(record.id.as_bytes())?;
+                // 3. Add entry to docmap: doc_id -> metadata_ptr
+                let mut doc_id_key = id.as_bytes().to_vec();
+                doc_id_key.resize(self.config.doc_id_key_len, b' '); // pad to configured length
+                self.docmap_builder.add(&doc_id_key, metadata_ptr)?;
 
-            // 5. Add entry to idmap: record_id -> doc_id_ptr
-            let idmap_key = record_id.to_be_bytes();
-            self.idmap_builder.add(&idmap_key, doc_id_ptr)?;
+                // 4. Write doc_id to the blob store (for the reverse index) and get a pointer
+                let doc_id_ptr = self.metadata_store.append(id.as_bytes())?;
+
+                // 5. Add entry to idmap: record_id -> doc_id_ptr
+                let idmap_key = record_id.to_be_bytes();
+                self.idmap_builder.add(&idmap_key, doc_id_ptr)?;
+            } else {
+                // Tombstone: store delete marker
+                let payload = StoredPayload { ts, metadata: serde_json::Value::Null, is_tombstone: true };
+                let metadata_bytes = serde_json::to_vec(&payload)?;
+                let metadata_ptr = self.metadata_store.append(&metadata_bytes)?;
+
+                let mut doc_id_key = id.as_bytes().to_vec();
+                doc_id_key.resize(self.config.doc_id_key_len, b' ');
+                self.docmap_builder.add(&doc_id_key, metadata_ptr)?;
+            }
         }
 
         Ok(())

@@ -23,5 +23,8 @@ fn main() -> anyhow::Result<()> {
         Commands::Build(args) => cli::handle_build(args),
         Commands::Search(args) => cli::handle_search(args),
         Commands::Serve(args) => cli::handle_serve(args),
+        Commands::Upsert(args) => cli::handle_upsert(args),
+        Commands::Delete(args) => cli::handle_delete(args),
+        Commands::Flush(args) => cli::handle_flush(args),
     }
 }

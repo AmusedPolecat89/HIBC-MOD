@@ -14,6 +14,13 @@ pub struct EngineConfig {
     pub idmap: HpinParams,
 
     pub ann_build_neighbor_k: usize,     // neighbors serialized per node
+    pub lsm: Option<LsmConfig>,
+}
+
+#[derive(Serialize, Deserialize, Debug, Clone)]
+pub struct LsmConfig {
+    pub flush_threshold_bytes: usize,
+    pub wal_fsync_each_write: bool,
 }
 
 #[derive(Debug, Clone, Serialize, Deserialize)]
@@ -61,6 +68,53 @@ impl EngineConfig {
         match spec {
             AlphabetSpec::Utf8 { chars } => chars.as_bytes().to_vec(),
             AlphabetSpec::ByteRange { start, end } => (*start..=*end).collect(),
+        }
+    }
+}
+
+impl Default for AnnParams {
+    fn default() -> Self {
+        Self {
+            m: 24,
+            ef_construction: 400,
+            ef_search: 100,
+            nb_layers: None,
+        }
+    }
+}
+
+impl Default for HpinParams {
+    fn default() -> Self {
+        Self {
+            n: 36,
+            m: 30,
+            alphabet: AlphabetSpec::Utf8 {
+                chars: "abcdefghijklmnopqrstuvwxyz0123456789_ ".into(),
+            },
+        }
+    }
+}
+
+impl Default for EngineConfig {
+    fn default() -> Self {
+        Self {
+            version: 1,
+            vector_dim: 512,
+            builder_capacity_hint: 10_000,
+            doc_id_key_len: 36,
+            id_key_len: 8,
+            ann: Default::default(),
+            ann_build_neighbor_k: 10,
+            docmap: Default::default(),
+            idmap: HpinParams {
+                n: 8,
+                m: 4,
+                alphabet: AlphabetSpec::ByteRange { start: 0, end: 255 },
+            },
+            lsm: Some(LsmConfig {
+                flush_threshold_bytes: 256 * 1024,
+                wal_fsync_each_write: false,
+            }),
         }
     }
 }

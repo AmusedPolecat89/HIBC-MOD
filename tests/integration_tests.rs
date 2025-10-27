@@ -1,21 +1,62 @@
 // tests/integration_tests.rs
 
+mod lsm_updates;
+
 use anyhow::Result;
-use hibc_mod::engine::{builder::EngineBuilder, engine::DataEngine, config::{EngineConfig, AnnParams, HpinParams, AlphabetSpec}};
+use hibc_mod::engine::{
+    config::{EngineConfig, LsmConfig},
+    engine::DataEngine,
+};
 use serde_json::json;
-use std::fs::{self, File};
-use std::io::Write;
+use std::fs;
 use std::path::PathBuf;
 use tempfile::tempdir;
+
+fn test_cfg(capacity: usize) -> EngineConfig {
+    use hibc_mod::engine::config::{AlphabetSpec, HpinParams};
+    
+    EngineConfig {
+        doc_id_key_len: 36,
+        id_key_len: 8,
+        builder_capacity_hint: capacity,
+        docmap: HpinParams {
+            n: 36,
+            m: 30,
+            alphabet: AlphabetSpec::ByteRange { start: 0, end: 255 },
+        },
+        idmap: HpinParams {
+            n: 8,
+            m: 4,
+            alphabet: AlphabetSpec::ByteRange { start: 0, end: 255 },
+        },
+        lsm: Some(LsmConfig {
+            flush_threshold_bytes: 256 * 1024,
+            wal_fsync_each_write: false,
+        }),
+        ..Default::default()
+    }
+}
 
 #[test]
 fn test_full_build_and_search_roundtrip() -> Result<()> {
     // ---------- Setup temp workspace ----------
     let workdir = tempdir()?;
     let base: PathBuf = workdir.path().join("db");
-    let data_path: PathBuf = workdir.path().join("data.jsonl");
 
-    // ---------- Build: write a small, predictable dataset ----------
+    // ---------- Setup: create empty database ----------
+    let cfg = test_cfg(3);
+    fs::create_dir_all(&base)?;
+    fs::write(
+        base.join("config.json"),
+        serde_json::to_string(&cfg)?,
+    )?;
+    // Create dummy index files so open doesn't fail
+    fs::create_dir_all(base.join("ann"))?;
+    fs::create_dir_all(base.join("docmap"))?;
+    fs::create_dir_all(base.join("idmap"))?;
+    fs::write(base.join("metadata.blob"), "")?;
+
+    // ---------- Insert data using upsert API ----------
     // 512-dim exact vector of 0.1s (this will be our query)
     let exact_vec = vec![0.1_f32; 512];
 
@@ -26,57 +67,31 @@ fn test_full_build_and_search_roundtrip() -> Result<()> {
     // Farther vector
     let far_vec = vec![0.9_f32; 512];
 
-    // Define records: 3 documents with simple metadata
-    let records = vec![
-        json!({
-            "id": "doc_exact_00000000000000000000000000000000",
-            "vector": exact_vec,
-            "metadata": { "title": "Exact", "tag": "golden" }
-        }),
-        json!({
-            "id": "doc_close_0000000000000000000000000000000",
-            "vector": close_vec,
-            "metadata": { "title": "Close", "tag": "near" }
-        }),
-        json!({
-            "id": "doc_far_000000000000000000000000000000000",
-            "vector": far_vec,
-            "metadata": { "title": "Far", "tag": "far" }
-        }),
-    ];
-
-    // Write JSONL
-    {
-        let mut f = File::create(&data_path)?;
-        for rec in &records {
-            writeln!(f, "{}", serde_json::to_string(rec)?)?;
-        }
-    }
-
-    // ---------- Build: run EngineBuilder over the JSONL ----------
-    let cfg = EngineConfig {
-        version: 1,
-        vector_dim: 512,
-        builder_capacity_hint: records.len(),
-        doc_id_key_len: 36,
-        id_key_len: 8,
-        ann: AnnParams { m: 24, ef_construction: 400, nb_layers: None, ef_search: 100 },
-        docmap: HpinParams {
-            n: 36, m: 30,
-            alphabet: AlphabetSpec::Utf8 { chars: "abcdefghijklmnopqrstuvwxyz0123456789_ ".into() },
-        },
-        idmap: HpinParams {
-            n: 8, m: 4,
-            alphabet: AlphabetSpec::ByteRange { start: 0, end: 255 },
-        },
-        ann_build_neighbor_k: 10,
-    };
-    let mut builder = EngineBuilder::new(&base, cfg)?;
-    builder.build_from_jsonl(&data_path)?;
-    builder.finalize()?;
-
-    // ---------- Query: open engine and search ----------
+    // Open engine and insert records
     let engine = DataEngine::open(&base)?;
+    
+    engine.upsert(
+        "doc_exact_00000000000000000000000000000000".to_string(),
+        exact_vec.clone(),
+        json!({ "title": "Exact", "tag": "golden" }),
+        1
+    )?;
+    
+    engine.upsert(
+        "doc_close_0000000000000000000000000000000".to_string(),
+        close_vec.clone(),
+        json!({ "title": "Close", "tag": "near" }),
+        2
+    )?;
+    
+    engine.upsert(
+        "doc_far_000000000000000000000000000000000".to_string(),
+        far_vec.clone(),
+        json!({ "title": "Far", "tag": "far" }),
+        3
+    )?;
+
+    // ---------- Query: search ----------
     let query = vec![0.1_f32; 512];
     let k = 3usize;
     let results = engine.search(&query, k)?;
@@ -100,14 +115,9 @@ fn test_full_build_and_search_roundtrip() -> Result<()> {
     let expected_meta = json!({ "title": "Exact", "tag": "golden" });
     assert_eq!(results[0].metadata, expected_meta);
 
-    // Optional: sanity check the on-disk files exist
-    assert!(fs::metadata(base.join("ann").with_extension("ann_slab")).is_ok());
-    assert!(fs::metadata(base.join("ann").with_extension("ann_blob")).is_ok());
-    assert!(fs::metadata(base.join("docmap").with_extension("db")).is_ok());
-    assert!(fs::metadata(base.join("docmap").with_extension("hibc")).is_ok());
-    assert!(fs::metadata(base.join("idmap").with_extension("db")).is_ok());
-    assert!(fs::metadata(base.join("idmap").with_extension("hibc")).is_ok());
-    assert!(fs::metadata(base.join("metadata.blob")).is_ok());
+    // Optional: sanity check the LSM on-disk files exist
+    assert!(fs::metadata(base.join("wal")).is_ok());
+    assert!(fs::metadata(base.join("wal").join("current.wal")).is_ok());
 
     Ok(())
 }

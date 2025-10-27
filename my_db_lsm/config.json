@@ -1,0 +1,11 @@
+{
+  "version": 1,
+  "vector_dim": 512,
+  "builder_capacity_hint": 10000,
+  "doc_id_key_len": 36,
+  "id_key_len": 8,
+  "ann": { "m": 24, "ef_construction": 400, "nb_layers": null, "ef_search": 100 },
+  "docmap": { "n": 36, "m": 30, "alphabet": { "kind": "Utf8", "chars": "abcdefghijklmnopqrstuvwxyz0123456789_ " } },
+  "idmap": { "n": 8, "m": 4, "alphabet": { "kind": "ByteRange", "start": 0, "end": 255 } },
+  "ann_build_neighbor_k": 10
+}

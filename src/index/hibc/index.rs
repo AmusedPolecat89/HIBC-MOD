@@ -60,6 +60,7 @@ impl HibcIndex {
     }
 
     /// Private helper to get a decompressed block from the data file.
+    #[allow(clippy::type_complexity)]
     fn get_decoded_block(&self, pid: u64) -> anyhow::Result<Option<Vec<(Vec<u8>, BlobPointer)>>> {
         let conn = self.pool.get()?;
         let mut stmt = conn.prepare_cached("SELECT offset, size FROM master_index WHERE prefix_id = ?")?;
