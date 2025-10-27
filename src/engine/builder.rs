@@ -51,8 +51,8 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
             .collect::<Vec<u8>>();
         let docmap_hpin = Hpin::new(
             &docmap_alphabet,
-            36, // Use the same fixed key length as in build_from_jsonl
-            4,
+            36, // fixed key length (ID padded to 36)
+            30, // make tail long so prefix_len = 6 (fits in u64 cleanly)
         ).unwrap();
         let docmap_builder = HibcIndexBuilder::new(&docmap_base_path, docmap_hpin)?;
         
