@@ -1,0 +1,17 @@
+[build-system]
+requires = ["maturin>=1.6,<2.0"]
+build-backend = "maturin"
+
+[project]
+name = "hibc-mod"
+version = "0.1.0"
+description = "Python bindings for the hibc-mod DataEngine"
+requires-python = ">=3.8"
+readme = "README.md"
+license = { text = "MIT" }
+authors = [{ name = "You", email = "you@example.com" }]
+
+[tool.maturin]
+bindings = "pyo3"
+module-name = "hibc_mod"
+compatibility = "manylinux2014"

@@ -1,0 +1,25 @@
+[package]
+name = "hibc_mod_py"
+version = "0.1.0"
+edition = "2021"
+license = "MIT"
+description = "Python bindings for the hibc-mod DataEngine"
+authors = ["You <you@example.com>"]
+
+[lib]
+name = "hibc_mod"          # import name in Python: import hibc_mod
+crate-type = ["cdylib"]
+
+[dependencies]
+pyo3 = { version = "0.22", features = ["extension-module", "abi3-py38"] }
+anyhow = "1"
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+
+# depend on your core crate
+hibc-mod = { path = "../../..", default-features = false }
+
+[profile.release]
+lto = true
+codegen-units = 1
+strip = "symbols"
