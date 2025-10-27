@@ -20,19 +20,39 @@ pub struct AnnResult {
     pub distance: f32,
 }
 
-// A simple struct for our internal priority queue during search
+// A candidate for the min-priority queue used during search exploration.
+// `Ord` is reversed to make `BinaryHeap` act as a min-heap.
 #[derive(PartialEq, Clone, Copy, Debug)]
-struct SearchCandidate {
+struct MinCandidate {
     id: RecordId,
     distance: f32,
 }
-impl Eq for SearchCandidate {}
-impl PartialOrd for SearchCandidate {
+impl Eq for MinCandidate {}
+impl PartialOrd for MinCandidate {
     fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
         other.distance.partial_cmp(&self.distance)
     }
 }
-impl Ord for SearchCandidate {
+impl Ord for MinCandidate {
+    fn cmp(&self, other: &Self) -> std::cmp::Ordering {
+        self.partial_cmp(other).unwrap()
+    }
+}
+
+// A candidate for the max-priority queue used to store final results.
+// `Ord` is natural, so `BinaryHeap` acts as a max-heap.
+#[derive(PartialEq, Clone, Copy, Debug)]
+struct MaxCandidate {
+    id: RecordId,
+    distance: f32,
+}
+impl Eq for MaxCandidate {}
+impl PartialOrd for MaxCandidate {
+    fn partial_cmp(&self, other: &Self) -> Option<std::cmp::Ordering> {
+        self.distance.partial_cmp(&other.distance)
+    }
+}
+impl Ord for MaxCandidate {
     fn cmp(&self, other: &Self) -> std::cmp::Ordering {
         self.partial_cmp(other).unwrap()
     }
@@ -63,21 +83,27 @@ impl AnnIndex {
         
         let entry_point_id: RecordId = 0;
         let mut visited: HashSet<RecordId> = HashSet::new();
-        let mut candidates: BinaryHeap<SearchCandidate> = BinaryHeap::new();
-        let mut results: BinaryHeap<SearchCandidate> = BinaryHeap::new();
+        let mut candidates: BinaryHeap<MinCandidate> = BinaryHeap::new();
+        // Results is a max-heap, so peek() gives the worst result (largest distance).
+        let mut results: BinaryHeap<MaxCandidate> = BinaryHeap::new();
 
         let entry_record: &super::builder::AnnSlabRecord = self.get_record(entry_point_id)?;
         let dist = Self::euclidean_distance(query, &entry_record.vector);
-        candidates.push(SearchCandidate { id: entry_point_id, distance: dist });
+        candidates.push(MinCandidate { id: entry_point_id, distance: dist });
         visited.insert(entry_point_id);
 
         while let Some(candidate) = candidates.pop() {
-            if results.len() < k || candidate.distance < results.peek().unwrap().distance {
-                results.push(candidate);
-                if results.len() > k { results.pop(); }
-            } else if !candidates.is_empty() && candidate.distance > candidates.peek().unwrap().distance {
-                // Optimization: if we're further than the furthest candidate, stop.
-                break;
+            // If the best candidate is worse than our worst result, we can stop.
+            if let Some(worst_result) = results.peek() {
+                if results.len() >= k && candidate.distance > worst_result.distance {
+                    break;
+                }
+            }
+
+            // Add to results, maintaining heap size.
+            results.push(MaxCandidate { id: candidate.id, distance: candidate.distance });
+            if results.len() > k {
+                results.pop();
             }
 
             let candidate_record: &super::builder::AnnSlabRecord = self.get_record(candidate.id)?;
@@ -90,12 +116,14 @@ impl AnnIndex {
                     visited.insert(neighbor_id);
                     let neighbor_record: &super::builder::AnnSlabRecord = self.get_record(neighbor_id)?;
                     let dist = Self::euclidean_distance(query, &neighbor_record.vector);
-                    candidates.push(SearchCandidate { id: neighbor_id, distance: dist });
+                    candidates.push(MinCandidate { id: neighbor_id, distance: dist });
                 }
             }
         }
         
-                Ok(results.into_sorted_vec().iter().map(|n| AnnResult {
+        // into_sorted_vec() drains the heap and sorts by the natural order of the items.
+        // For MaxCandidate, this is ascending distance.
+        Ok(results.into_sorted_vec().iter().map(|n| AnnResult {
             id: n.id,
             distance: n.distance,
         }).collect())
