@@ -1,9 +1,8 @@
 // In src/index/ann/index.rs
 
-use crate::index::traits::AnnIndex as AnnIndexTrait;
 use crate::storage::blob::BlobReader;
 use crate::storage::slab::{RecordId, SlabReader};
-use bytemuck::Pod;
+use bytemuck::{try_cast_slice, Pod};
 use std::collections::{BinaryHeap, HashSet};
 use std::path::Path;
 
@@ -73,6 +72,14 @@ impl AnnIndex {
         bytemuck::try_from_bytes(self.vector_slab.read(id)?)
             .map_err(|e| anyhow::anyhow!("Failed to cast slab record: {}", e))
     }
+
+    fn load_vector<'a>(&'a self, rec: &super::builder::AnnSlabRecord) -> anyhow::Result<&'a [f32]> {
+        let bytes = self.graph_store.read(rec.vector_ptr)?;
+        let floats: &[f32] = try_cast_slice(bytes)
+            .map_err(|_| anyhow::anyhow!("vector blob not properly aligned/length for f32"))?;
+        anyhow::ensure!(floats.len() == rec.vector_len as usize, "vector length mismatch");
+        Ok(floats)
+    }
     
     fn euclidean_distance(a: &[f32], b: &[f32]) -> f32 {
         a.iter().zip(b.iter()).map(|(x, y)| (x - y).powi(2)).sum::<f32>().sqrt()
@@ -88,7 +95,8 @@ impl AnnIndex {
         let mut results: BinaryHeap<MaxCandidate> = BinaryHeap::new();
 
         let entry_record: &super::builder::AnnSlabRecord = self.get_record(entry_point_id)?;
-        let dist = Self::euclidean_distance(query, &entry_record.vector);
+        let entry_vec = self.load_vector(entry_record)?;
+        let dist = Self::euclidean_distance(query, entry_vec);
         candidates.push(MinCandidate { id: entry_point_id, distance: dist });
         visited.insert(entry_point_id);
 
@@ -115,7 +123,8 @@ impl AnnIndex {
                 if !visited.contains(&neighbor_id) {
                     visited.insert(neighbor_id);
                     let neighbor_record: &super::builder::AnnSlabRecord = self.get_record(neighbor_id)?;
-                    let dist = Self::euclidean_distance(query, &neighbor_record.vector);
+                    let neighbor_vec = self.load_vector(neighbor_record)?;
+                    let dist = Self::euclidean_distance(query, neighbor_vec);
                     candidates.push(MinCandidate { id: neighbor_id, distance: dist });
                 }
             }
@@ -130,8 +139,10 @@ impl AnnIndex {
     }
 }
 
-impl AnnIndexTrait<&[f32], AnnResult> for AnnIndex {
+impl crate::index::traits::AnnIndex<&[f32], AnnResult> for AnnIndex {
     fn search(&self, query: &[f32], k: usize) -> anyhow::Result<Vec<AnnResult>> {
         self.execute_greedy_search(query, k)
     }
 }
+
+

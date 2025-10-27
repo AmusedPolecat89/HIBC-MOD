@@ -2,6 +2,7 @@
 
 use crate::storage::blob::{BlobPointer, BlobWriter};
 use crate::storage::slab::SlabWriter;
+use crate::engine::config::EngineConfig;
 use bytemuck::{Pod, Zeroable};
 use std::path::Path;
 
@@ -12,7 +13,9 @@ use hnsw_rs::dist::dist::DistL2; // The correct Euclidean distance type
 #[repr(C)]
 #[derive(Clone, Copy, Pod, Zeroable)]
 pub struct AnnSlabRecord {
-    pub vector: [f32; 512],
+    pub vector_ptr: BlobPointer,
+    pub vector_len: u32,       // number of f32 values
+    pub _pad: u32,             // keep 16B alignment (optional)
     pub neighbors_ptr: BlobPointer,
 }
 
@@ -22,16 +25,20 @@ pub struct AnnIndexBuilder<'a> {
     in_memory_hnsw: Hnsw<'a, f32, DistL2>,
     // Store vectors ourselves since hnsw_rs doesn't expose them easily
     vectors: Vec<Vec<f32>>,
+    cfg: EngineConfig,
 }
 
 impl<'a> AnnIndexBuilder<'a> {
-    pub fn new(vector_dim: usize, capacity: usize) -> Self {
-        assert_eq!(vector_dim, 512, "This example builder only supports 512 dimensions");
+    pub fn new(cfg: EngineConfig) -> Self {
+        let vector_dim = cfg.vector_dim;
+        let capacity = cfg.builder_capacity_hint;
 
-        // Standard HNSW parameters
-        let max_nb_conn = 24; // M parameter
-        let nb_layer = 16usize.min((capacity as f32).ln().trunc() as usize);
-        let ef_c = 400; // efConstruction parameter
+        // Standard HNSW parameters (from config)
+        let max_nb_conn = cfg.ann.m;
+        let nb_layer = cfg.ann.nb_layers.unwrap_or_else(|| {
+            16usize.min((capacity as f32).ln().trunc() as usize)
+        });
+        let ef_c = cfg.ann.ef_construction;
 
         log::debug!("Creating AnnIndexBuilder.");
         log::debug!("  - Vector Dim: {}", vector_dim);
@@ -44,10 +51,12 @@ impl<'a> AnnIndexBuilder<'a> {
             // The constructor takes parameters and an instance of the distance metric.
             in_memory_hnsw: Hnsw::new(max_nb_conn, capacity, nb_layer, ef_c, DistL2 {}),
             vectors: Vec::with_capacity(capacity),
+            cfg,
         }
     }
 
     pub fn add(&mut self, vector: &[f32]) {
+        assert_eq!(vector.len(), self.cfg.vector_dim, "vector length must equal config.vector_dim");
         // Get the current number of points in the HNSW structure
         let current_len = self.in_memory_hnsw.get_nb_point();
         log::trace!("add(): About to insert vector at index {}. Vector (first 5 elements): {:?}", current_len, &vector[..5]);
@@ -81,16 +90,23 @@ impl<'a> AnnIndexBuilder<'a> {
             }
             let vector = &self.vectors[node_id];
             // Search for a small number of neighbors to build a basic graph
-            let neighbors = self.in_memory_hnsw.search(vector, 10, 100);
+            let neighbors = self.in_memory_hnsw.search(
+                vector,
+                self.cfg.ann_build_neighbor_k,
+                self.cfg.ann.ef_search.max(100),
+            );
             let neighbor_ids: Vec<u64> = neighbors.iter().map(|n| n.d_id as u64).collect();
 
             let neighbors_bytes = bincode::serialize(&neighbor_ids)?;
             let neighbors_ptr = blob_writer.append(&neighbors_bytes)?;
 
-            let mut vector_array = [0.0f32; 512];
-            vector_array.copy_from_slice(vector);
+            // Store vector bytes in blob
+            let vector_bytes = bytemuck::cast_slice::<f32, u8>(vector);
+            let vector_ptr = blob_writer.append(vector_bytes)?;
             let record = AnnSlabRecord {
-                vector: vector_array,
+                vector_ptr,
+                vector_len: self.cfg.vector_dim as u32,
+                _pad: 0,
                 neighbors_ptr,
             };
 

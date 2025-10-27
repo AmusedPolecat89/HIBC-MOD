@@ -4,6 +4,7 @@ use crate::index::ann::builder::AnnIndexBuilder;
 use crate::index::hibc::builder::HibcIndexBuilder;
 use crate::index::hibc::hpin::Hpin;
 use crate::storage::blob::BlobWriter;
+use crate::engine::config::EngineConfig;
 use anyhow::Context;
 use serde::Deserialize;
 use std::fs;
@@ -19,6 +20,7 @@ pub struct EngineBuilder<'a> { // Add lifetime here
     docmap_builder: HibcIndexBuilder,
     idmap_builder: HibcIndexBuilder,
     metadata_store: BlobWriter,
+    config: EngineConfig,
 }
 
 /// Represents the structure of a single line in the input JSONL file.
@@ -30,12 +32,12 @@ struct InputRecord {
 }
 
 impl<'a> EngineBuilder<'a> { // Add lifetime here
-    // The `new` function now needs a capacity hint.
-    pub fn new(base_path: &Path, vector_dim: usize, capacity: usize) -> anyhow::Result<Self> {
+    pub fn new(base_path: &Path, config: EngineConfig) -> anyhow::Result<Self> {
         fs::create_dir_all(base_path)?;
-        
-        // Pass the capacity to the AnnIndexBuilder
-        let ann_builder = AnnIndexBuilder::new(vector_dim, capacity);
+        config.validate()?;
+
+        // ANN builder from config
+        let ann_builder = AnnIndexBuilder::new(config.clone());
 
         // Blob store for all text-based values (doc ids and metadata)
         let metadata_path = base_path.join("metadata.blob");
@@ -44,25 +46,18 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
         // --- HIBC Builders ---
         // For docmap: keys are user-provided strings
         let docmap_base_path = base_path.join("docmap");
-        let docmap_alphabet = (b'a'..=b'z')
-            .chain(b'0'..=b'9')
-            .chain(std::iter::once(b'_'))
-            .chain(std::iter::once(b' ')) // Add space for padding
-            .collect::<Vec<u8>>();
+        let docmap_alphabet = EngineConfig::alphabet_bytes(&config.docmap.alphabet);
         let docmap_hpin = Hpin::new(
             &docmap_alphabet,
-            36, // fixed key length (ID padded to 36)
-            30, // make tail long so prefix_len = 6 (fits in u64 cleanly)
+            config.docmap.n,
+            config.docmap.m,
         ).unwrap();
         let docmap_builder = HibcIndexBuilder::new(&docmap_base_path, docmap_hpin)?;
         
         // For idmap: keys are 8-byte u64 integers
         let idmap_base_path = base_path.join("idmap");
-        let idmap_hpin = Hpin::new(
-            (0..=255).collect::<Vec<u8>>().as_slice(), // Full byte range for integer keys
-            8, // Fixed key length for u64
-            4,
-        ).unwrap();
+        let idmap_alphabet = EngineConfig::alphabet_bytes(&config.idmap.alphabet);
+        let idmap_hpin = Hpin::new(&idmap_alphabet, config.idmap.n, config.idmap.m).unwrap();
         let idmap_builder = HibcIndexBuilder::new(&idmap_base_path, idmap_hpin)?;
 
         Ok(Self {
@@ -71,6 +66,7 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
             docmap_builder,
             idmap_builder,
             metadata_store,
+            config,
         })
     }
 
@@ -95,7 +91,7 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
 
             // 3. Add entry to docmap: doc_id -> metadata_ptr
             let mut doc_id_key = record.id.as_bytes().to_vec();
-            doc_id_key.resize(36, b' '); // Pad key to fixed length with spaces
+            doc_id_key.resize(self.config.doc_id_key_len, b' '); // pad to configured length
             self.docmap_builder.add(&doc_id_key, metadata_ptr)?;
 
             // 4. Write doc_id to the blob store (for the reverse index) and get a pointer
@@ -119,8 +115,11 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
         self.docmap_builder.finalize()?;
         self.idmap_builder.finalize()?;
         self.metadata_store.flush()?;
-        
-                log::info!("Engine build complete.");
+        // Write effective config.json
+        let config_path = self.base_path.join("config.json");
+        std::fs::write(&config_path, serde_json::to_vec_pretty(&self.config)?)?;
+
+        log::info!("Engine build complete.");
         Ok(())
     }
 }

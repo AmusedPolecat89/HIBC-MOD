@@ -1,7 +1,7 @@
 // tests/integration_tests.rs
 
 use anyhow::Result;
-use hibc_mod::engine::{builder::EngineBuilder, engine::DataEngine};
+use hibc_mod::engine::{builder::EngineBuilder, engine::DataEngine, config::{EngineConfig, AnnParams, HpinParams, AlphabetSpec}};
 use serde_json::json;
 use std::fs::{self, File};
 use std::io::Write;
@@ -54,9 +54,24 @@ fn test_full_build_and_search_roundtrip() -> Result<()> {
     }
 
     // ---------- Build: run EngineBuilder over the JSONL ----------
-    let vector_dim = 512usize;
-    let capacity = records.len();
-    let mut builder = EngineBuilder::new(&base, vector_dim, capacity)?;
+    let cfg = EngineConfig {
+        version: 1,
+        vector_dim: 512,
+        builder_capacity_hint: records.len(),
+        doc_id_key_len: 36,
+        id_key_len: 8,
+        ann: AnnParams { m: 24, ef_construction: 400, nb_layers: None, ef_search: 100 },
+        docmap: HpinParams {
+            n: 36, m: 30,
+            alphabet: AlphabetSpec::Utf8 { chars: "abcdefghijklmnopqrstuvwxyz0123456789_ ".into() },
+        },
+        idmap: HpinParams {
+            n: 8, m: 4,
+            alphabet: AlphabetSpec::ByteRange { start: 0, end: 255 },
+        },
+        ann_build_neighbor_k: 10,
+    };
+    let mut builder = EngineBuilder::new(&base, cfg)?;
     builder.build_from_jsonl(&data_path)?;
     builder.finalize()?;
 

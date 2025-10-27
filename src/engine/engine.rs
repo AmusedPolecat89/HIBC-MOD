@@ -4,6 +4,7 @@ use crate::index::ann::index::{AnnIndex, AnnResult};
 use crate::index::hibc::index::HibcIndex;
 use crate::index::traits::{AnnIndex as AnnIndexTrait, Index as IndexTrait};
 use crate::storage::blob::BlobReader;
+use crate::engine::config::EngineConfig;
 use serde::{Deserialize, Serialize};
 use std::path::Path;
 
@@ -37,6 +38,8 @@ pub struct DataEngine {
     idmap_index: HibcIndex,
     // The raw storage for metadata blobs
     metadata_store: BlobReader,
+    // Engine configuration loaded at open time
+    pub config: EngineConfig,
 }
 
 impl DataEngine {
@@ -48,12 +51,16 @@ impl DataEngine {
         let docmap_base_path = base_path.join("docmap");
         let idmap_base_path = base_path.join("idmap");
         let metadata_path = base_path.join("metadata.blob");
+        let config_path = base_path.join("config.json");
+        let cfg: EngineConfig = serde_json::from_slice(&std::fs::read(&config_path)?)?;
+        cfg.validate()?;
 
         Ok(Self {
             ann_index: AnnIndex::open(&ann_base_path)?,
             docmap_index: HibcIndex::open(&docmap_base_path)?,
             idmap_index: HibcIndex::open(&idmap_base_path)?,
             metadata_store: BlobReader::open(&metadata_path)?,
+            config: cfg,
         })
     }
 
@@ -62,6 +69,7 @@ impl DataEngine {
     /// This is the primary method for the RAG/recommendation use case. It orchestrates
     /// a multi-step process across all underlying components.
     pub fn search(&self, query_vector: &[f32], k: usize) -> anyhow::Result<Vec<QueryResult>> {
+        anyhow::ensure!(query_vector.len() == self.config.vector_dim, "Query vector dim {} != config.vector_dim {}", query_vector.len(), self.config.vector_dim);
         // 1. Perform the fast, approximate search on the ANN index.
         //    This returns a list of internal RecordIds.
         let ann_results: Vec<AnnResult> = self.ann_index.search(query_vector, k)?;
@@ -75,12 +83,9 @@ impl DataEngine {
                 let doc_id_bytes = self.metadata_store.read(doc_id_ptr)?;
                 let doc_id_str = String::from_utf8(doc_id_bytes.to_vec())?;
 
-                // --- THIS IS THE FIX ---
-                // We must normalize the key exactly as it was done during the build process.
+                // Normalize key using configured length
                 let mut docmap_key = doc_id_bytes.to_vec();
-                // This '36' is a "magic number" that should come from configuration in the future,
-                // but for now, we hardcode it to match the builder.
-                docmap_key.resize(36, b' ');
+                docmap_key.resize(self.config.doc_id_key_len, b' ');
 
                 let mut metadata = serde_json::Value::Null;
                 // Use the new, correctly padded key for the lookup.

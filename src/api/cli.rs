@@ -1,6 +1,6 @@
 // In src/api/cli.rs
 
-use crate::engine::{builder::EngineBuilder, engine::DataEngine};
+use crate::engine::{builder::EngineBuilder, engine::DataEngine, config::EngineConfig};
 use clap::{Parser, Subcommand};
 use std::path::PathBuf;
 use std::time::Instant;
@@ -34,12 +34,9 @@ pub struct BuildArgs {
     /// The base path for the output database files.
     #[arg(short, long)]
     pub db_path: PathBuf,
-    /// The dimension of the vectors in the dataset.
-    #[arg(long, default_value_t = 512)]
-    pub vector_dim: usize,
-    /// Expected number of items to be inserted (for pre-allocation).
+    /// Path to EngineConfig JSON
     #[arg(long)]
-    pub capacity: usize,
+    pub config: PathBuf,
 }
 
 #[derive(Parser, Debug)]
@@ -62,8 +59,9 @@ pub fn handle_build(args: BuildArgs) -> anyhow::Result<()> {
     log::info!("Starting database build...");
     let start_time = Instant::now();
 
-    // Pass the capacity to the EngineBuilder
-    let mut builder = EngineBuilder::new(&args.db_path, args.vector_dim, args.capacity)?;
+    let cfg: EngineConfig = serde_json::from_slice(&std::fs::read(&args.config)?)?;
+    cfg.validate()?;
+    let mut builder = EngineBuilder::new(&args.db_path, cfg)?;
     builder.build_from_jsonl(&args.input_file)?;
     builder.finalize()?;
 
