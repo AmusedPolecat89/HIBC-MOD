@@ -95,7 +95,7 @@ impl AnnIndex {
             }
         }
         
-        Ok(results.into_sorted_vec().iter().map(|n| AnnResult {
+                Ok(results.into_sorted_vec().iter().map(|n| AnnResult {
             id: n.id,
             distance: n.distance,
         }).collect())

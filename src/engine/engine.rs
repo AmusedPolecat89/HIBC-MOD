@@ -73,17 +73,24 @@ impl DataEngine {
             let record_id_key = (result.id as u64).to_be_bytes();
             if let Some(doc_id_ptr) = self.idmap_index.get(&record_id_key)? {
                 let doc_id_bytes = self.metadata_store.read(doc_id_ptr)?;
-                let doc_id = String::from_utf8(doc_id_bytes.to_vec())?;
+                let doc_id_str = String::from_utf8(doc_id_bytes.to_vec())?;
 
-                // 3. Look up the metadata for that Document ID.
+                // --- THIS IS THE FIX ---
+                // We must normalize the key exactly as it was done during the build process.
+                let mut docmap_key = doc_id_bytes.to_vec();
+                // This '36' is a "magic number" that should come from configuration in the future,
+                // but for now, we hardcode it to match the builder.
+                docmap_key.resize(36, b' ');
+
                 let mut metadata = serde_json::Value::Null;
-                if let Some(metadata_ptr) = self.docmap_index.get(doc_id.as_bytes())? {
+                // Use the new, correctly padded key for the lookup.
+                if let Some(metadata_ptr) = self.docmap_index.get(&docmap_key)? {
                     let metadata_bytes = self.metadata_store.read(metadata_ptr)?;
                     metadata = serde_json::from_slice(metadata_bytes)?;
                 }
 
                 final_results.push(QueryResult {
-                    id: doc_id,
+                    id: doc_id_str, // Use the original, unpadded string for the final result
                     distance: result.distance,
                     metadata,
                 });
