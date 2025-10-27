@@ -161,7 +161,10 @@ fn writer_thread_loop(
                     pointer: BlockPointerInternal { offset, size: size_on_disk, tail_count },
                 });
             }
-            WriterMessage::Shutdown => break,
+                            WriterMessage::Shutdown => {
+                    log::debug!("Writer thread shutting down.");
+                    break;
+                }
         }
     }
 

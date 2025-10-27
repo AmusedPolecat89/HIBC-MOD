@@ -4,13 +4,21 @@ use clap::Parser;
 use hibc_mod::api::cli::{self, Cli, Commands};
 
 fn main() -> anyhow::Result<()> {
-    // Initialize a simple logger
-    env_logger::Builder::from_env(env_logger::Env::default().default_filter_or("info")).init();
-
-    // Parse the command-line arguments
+    // Parse the command-line arguments first.
     let cli = Cli::parse();
 
-    // Match on the command and dispatch to the appropriate handler function
+    // --- NEW LOGGER INITIALIZATION LOGIC ---
+    // Set the log level based on the verbosity flag.
+    let log_level = match cli.verbose {
+        0 => log::LevelFilter::Warn,  // Default: show only warnings and errors
+        1 => log::LevelFilter::Info,  // -v: show info, warnings, errors
+        2 => log::LevelFilter::Debug, // -vv: show debug and lower
+        _ => log::LevelFilter::Trace, // -vvv and more: show everything
+    };
+
+    env_logger::Builder::new().filter_level(log_level).init();
+
+    // Now, dispatch to the appropriate handler function.
     match cli.command {
         Commands::Build(args) => cli::handle_build(args),
         Commands::Search(args) => cli::handle_search(args),

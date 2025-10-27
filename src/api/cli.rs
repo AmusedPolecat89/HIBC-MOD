@@ -12,6 +12,10 @@ use std::time::Instant;
 pub struct Cli {
     #[command(subcommand)]
     pub command: Commands,
+
+    /// Increase message verbosity.
+    #[arg(short, long, action = clap::ArgAction::Count, global = true)]
+    pub verbose: u8,
 }
 
 #[derive(Subcommand, Debug)]
@@ -55,7 +59,7 @@ pub struct SearchArgs {
 
 /// Handles the `build` command.
 pub fn handle_build(args: BuildArgs) -> anyhow::Result<()> {
-    println!("Starting database build...");
+    log::info!("Starting database build...");
     let start_time = Instant::now();
 
     // Pass the capacity to the EngineBuilder
@@ -72,7 +76,7 @@ pub fn handle_build(args: BuildArgs) -> anyhow::Result<()> {
 
 /// Handles the `search` command.
 pub fn handle_search(args: SearchArgs) -> anyhow::Result<()> {
-    println!("Loading database engine for search...");
+    log::info!("Loading database engine for search...");
     let engine = DataEngine::open(&args.db_path)?;
 
     let query_vector: Vec<f32> = serde_json::from_str(&args.vector)?;

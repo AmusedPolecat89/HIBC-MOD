@@ -59,7 +59,8 @@ impl<'a> AnnIndexBuilder<'a> {
     }
 
     pub fn finalize(self, base_path: &Path) -> anyhow::Result<()> {
-        println!("[SUPER DEBUG] finalize(): Starting HNSW graph serialization.");
+        log::info!("Building HNSW graph in-memory from {} vectors...", self.vectors.len());
+        log::info!("In-memory HNSW graph build complete.");
         log::info!("Serializing HNSW graph to on-disk format...");
         let slab_path = base_path.with_extension("ann_slab");
         let blob_path = base_path.with_extension("ann_blob");
@@ -103,7 +104,6 @@ impl<'a> AnnIndexBuilder<'a> {
         slab_writer.flush()?;
         blob_writer.flush()?;
 
-        println!("[SUPER DEBUG] Finalization complete.");
         log::info!("ANN index build complete. {} nodes written.", num_nodes);
         Ok(())
     }

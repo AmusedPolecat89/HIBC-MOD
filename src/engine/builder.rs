@@ -120,7 +120,7 @@ impl<'a> EngineBuilder<'a> { // Add lifetime here
         self.idmap_builder.finalize()?;
         self.metadata_store.flush()?;
         
-        log::info!("Engine build complete.");
+                log::info!("Engine build complete.");
         Ok(())
     }
 }
