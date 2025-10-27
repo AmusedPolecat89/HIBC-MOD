@@ -24,6 +24,8 @@ pub enum Commands {
     Build(BuildArgs),
     /// Perform a vector similarity search.
     Search(SearchArgs),
+    /// Serve an HTTP API exposing search and document endpoints.
+    Serve(ServeArgs),
 }
 
 #[derive(Parser, Debug)]
@@ -50,6 +52,16 @@ pub struct SearchArgs {
     /// The number of nearest neighbors to return.
     #[arg(short, long, default_value_t = 10)]
     pub top_k: usize,
+}
+
+#[derive(Parser, Debug)]
+pub struct ServeArgs {
+    /// The base path of the database to serve.
+    #[arg(short, long)]
+    pub db_path: PathBuf,
+    /// Bind address (ip:port)
+    #[arg(long, default_value = "0.0.0.0:3000")]
+    pub bind: String,
 }
 
 // --- 2. Implement the Handler Functions ---
@@ -107,4 +119,13 @@ pub fn handle_search(args: SearchArgs) -> anyhow::Result<()> {
     println!("{:-<80}", "");
 
     Ok(())
+}
+
+pub fn handle_serve(args: ServeArgs) -> anyhow::Result<()> {
+    let addr: std::net::SocketAddr = args.bind.parse()?;
+    let rt = tokio::runtime::Builder::new_multi_thread()
+        .enable_all()
+        .thread_name("hibc-serve")
+        .build()?;
+    rt.block_on(crate::api::serve::serve(args.db_path, addr))
 }

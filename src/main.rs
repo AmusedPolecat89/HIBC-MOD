@@ -22,5 +22,6 @@ fn main() -> anyhow::Result<()> {
     match cli.command {
         Commands::Build(args) => cli::handle_build(args),
         Commands::Search(args) => cli::handle_search(args),
+        Commands::Serve(args) => cli::handle_serve(args),
     }
 }

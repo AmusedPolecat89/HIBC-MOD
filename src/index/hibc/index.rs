@@ -6,7 +6,8 @@ use crate::index::traits::Index;
 use crate::storage::blob::BlobPointer;
 use anyhow::Context;
 use memmap2::Mmap;
-use rusqlite::{Connection, OptionalExtension};
+use r2d2_sqlite::SqliteConnectionManager;
+use rusqlite::OptionalExtension;
 use std::collections::HashSet;
 use std::path::Path;
 
@@ -16,7 +17,7 @@ use std::path::Path;
 /// where the value is a `BlobPointer` pointing to the actual data in a `BlobStore`.
 pub struct HibcIndex {
     hpin: Hpin,
-    index_conn: Connection,
+    pool: r2d2::Pool<SqliteConnectionManager>,
     split_prefixes: HashSet<u64>,
     data_mmap: Mmap,
 }
@@ -29,16 +30,19 @@ impl HibcIndex {
         let db_path = base_path.with_extension("db");
         let data_path = base_path.with_extension("hibc");
 
-        // Open master index and load metadata
-        let index_conn = Connection::open_with_flags(db_path, rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY)?;
-        
-        let alphabet_str: Option<String> = index_conn.query_row("SELECT value FROM metadata WHERE key = 'alphabet'", [], |r| r.get(0)).optional()?;
-        let n: usize = index_conn.query_row("SELECT value FROM metadata WHERE key = 'n'", [], |r| r.get::<_, String>(0))?.parse()?;
-        let m: usize = index_conn.query_row("SELECT value FROM metadata WHERE key = 'm'", [], |r| r.get::<_, String>(0))?.parse()?;
+        // Read-only connection pool
+        let manager = SqliteConnectionManager::file(&db_path)
+            .with_flags(rusqlite::OpenFlags::SQLITE_OPEN_READ_ONLY);
+        let pool = r2d2::Pool::new(manager)?;
+
+        let conn = pool.get()?;
+        let alphabet_str: Option<String> = conn.query_row("SELECT value FROM metadata WHERE key = 'alphabet'", [], |r| r.get(0)).optional()?;
+        let n: usize = conn.query_row("SELECT value FROM metadata WHERE key = 'n'", [], |r| r.get::<_, String>(0))?.parse()?;
+        let m: usize = conn.query_row("SELECT value FROM metadata WHERE key = 'm'", [], |r| r.get::<_, String>(0))?.parse()?;
         
         let alphabet: Vec<u8> = alphabet_str.map(|s| s.into_bytes()).unwrap_or_else(|| (0..=255).collect());
 
-        let split_prefixes_str: String = index_conn.query_row("SELECT value FROM metadata WHERE key = 'split_prefixes'", [], |r| r.get(0))?;
+        let split_prefixes_str: String = conn.query_row("SELECT value FROM metadata WHERE key = 'split_prefixes'", [], |r| r.get(0))?;
         let split_prefixes = if split_prefixes_str.is_empty() {
             HashSet::new()
         } else {
@@ -52,12 +56,13 @@ impl HibcIndex {
             .with_context(|| format!("Failed to open data file: {}", data_path.display()))?;
         let data_mmap = unsafe { Mmap::map(&data_file)? };
 
-        Ok(Self { hpin, index_conn, split_prefixes, data_mmap })
+        Ok(Self { hpin, pool, split_prefixes, data_mmap })
     }
 
     /// Private helper to get a decompressed block from the data file.
     fn get_decoded_block(&self, pid: u64) -> anyhow::Result<Option<Vec<(Vec<u8>, BlobPointer)>>> {
-        let mut stmt = self.index_conn.prepare_cached("SELECT offset, size FROM master_index WHERE prefix_id = ?")?;
+        let conn = self.pool.get()?;
+        let mut stmt = conn.prepare_cached("SELECT offset, size FROM master_index WHERE prefix_id = ?")?;
         let block_pointer: Option<(u64, u64)> = stmt.query_row([&pid.to_be_bytes()], |row| Ok((row.get(0)?, row.get(1)?))).optional()?;
         
         let Some((offset, size)) = block_pointer else { return Ok(None) };
